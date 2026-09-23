@@ -1,9 +1,25 @@
+/**
+ * @file Compare the PatternFly variables the bridge emits against PatternFly 4's defaults.
+ */
+
 import { instance } from "./dist/node.js";
-import { patternflyLightTheme } from "./reference.css.js";
+import { patternflyLightTheme } from "./reference.css.ts";
 
 import { isCSS, isRef, isVariable, rebuildRegistry } from "@styleframe/core";
 
-function lookup(name, scope, root) {
+interface Scope {
+    parentId?: string;
+    variables?: { name: string; value: unknown }[];
+}
+
+interface Root extends Scope {
+    _registry: Map<string, Scope>;
+    themes: (Scope & { name: string })[];
+}
+
+type Resolution = [kind: "value" | "fallback" | "undefined" | "null", value: unknown];
+
+function lookup(name: string, scope: Scope | undefined, root: Root) {
     let current = scope;
     while (current) {
         const found = current.variables?.find((v) => v.name === name);
@@ -17,17 +33,17 @@ function lookup(name, scope, root) {
 
 // type TokenValue = PrimitiveTokenValue | Reference | CSS | Array<PrimitiveTokenValue | Reference | CSS>
 
-function getValue(value, scope, root, seen) {
+function getValue(value: unknown, scope: Scope, root: Root, seen: Set<string>): Resolution {
     if (value == null) {
         return ["null", ""];
     }
 
     if (Array.isArray(value)) {
-        return value.map((v) => getValue(v, scope, root, seen)).join(" ");
+        return ["value", value.map((v) => getValue(v, scope, root, seen)[1]).join(" ")];
     }
 
     if (isCSS(value)) {
-        return value.value.map((v) => getValue(v, scope, root, seen)).join("");
+        return ["value", value.value.map((v) => getValue(v, scope, root, seen)[1]).join("")];
     }
 
     // This is broken. I had to find this one myself. Apparently, the type from @styleframe/core is
@@ -46,7 +62,7 @@ function getValue(value, scope, root, seen) {
 
         const found = lookup(name, scope, root);
         if (found) {
-            return getValue(found.variable, value, found.scope, root, seen);
+            return getValue(found.variable, found.scope, root, seen);
         }
 
         if (value.fallback) {
@@ -60,10 +76,10 @@ function getValue(value, scope, root, seen) {
     return ["value", value];
 }
 
-function getVariable(instance, name, { theme } = {}) {
-    const root = instance.root;
+function getVariable(name: string, { theme }: { theme?: string } = {}): Resolution | undefined {
+    const root = instance.root as unknown as Root;
     if (!root._registry?.size) {
-        rebuildRegistry(root);
+        rebuildRegistry(instance.root);
     }
     const scope = theme ? (root.themes.find((t) => t.name === theme) ?? root) : root;
     const found = lookup(name, scope, root);
@@ -71,7 +87,7 @@ function getVariable(instance, name, { theme } = {}) {
 }
 
 for (const [key, value] of Object.entries(patternflyLightTheme)) {
-    const found = getVariable(instance, key);
+    const found = getVariable(key);
     if (!found) {
         console.log(`${key}: undefined`);
         continue;
